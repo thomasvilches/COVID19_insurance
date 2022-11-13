@@ -55,6 +55,9 @@ Base.@kwdef mutable struct Human
     waning::Vector{Float64} = [1.0;1.0]
     tested::Bool = false
     max_boost::Int8 = 0
+
+    insured::Int8 = 0
+    medicine_day::Int8 = 0
     
 end
 
@@ -193,6 +196,9 @@ end
     day_count_booster::Int64 = 761
     ### after calibration, how much do we want to increase the contact rate... in this case, to reach 70%
     ### 0.5*0.95 = 0.475, so we want to multiply this by 1.473684211
+
+    days_of_medicine::Vector{Int8} = []
+    days_of_vaccine::Vector{Int8} = []
 end
 
 Base.@kwdef mutable struct ct_data_collect
@@ -440,6 +446,10 @@ function main(ip::ModelParameters,sim::Int64)
     ## vaccinate up to modeltime[1] with normal rates
     for ii in 1:(length(vv)-1)
         insert_infected(PRE, initinfvector[vv[ii]], 4, vv[ii])
+
+        for x in humans
+            x.medicine_day = p.medicine_day[ii]
+        end
 
         for st = vtimes[vv[ii]]:(vtimes[vv[ii+1]]-1)
             
@@ -748,7 +758,7 @@ function get_sample(idx,sim,xv,ag)
 end
 
 
-function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64,rb::Int64)
+function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64,rb::Int64, vaccine_day::Int8)
     aux_states = (MILD, MISO, INF, IISO, HOS, ICU, DED)
     nvacgiven::Int64  = 0
     ##first dose
@@ -763,35 +773,38 @@ function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64
         pos2 = sample(rng,pos,l1,replace=false)
 
         for ii in ind1[pos2]
-            x = humans[ii]
-            x.days_vac = 0
-            x.vac_status = 1
-            x.index_day = 1
-            x.vaccine_n = x.age < 18 ? 1 : sample([1,2,3], Weights(p.vaccine_proportion/sum(p.vaccine_proportion)))
-            x.vaccine = [:pfizer;:moderna;:jensen][x.vaccine_n]
             
-            x.vac_eff_inf = deepcopy(p.vac_efficacy_inf[x.vaccine_n])
-            x.vac_eff_symp = deepcopy(p.vac_efficacy_symp[x.vaccine_n])
-            x.vac_eff_sev = deepcopy(p.vac_efficacy_sev[x.vaccine_n])
+            x = humans[ii]
+            if vaccine_day+x.insured > 0
+                x.days_vac = 0
+                x.vac_status = 1
+                x.index_day = 1
+                x.vaccine_n = x.age < 18 ? 1 : sample([1,2,3], Weights(p.vaccine_proportion/sum(p.vaccine_proportion)))
+                x.vaccine = [:pfizer;:moderna;:jensen][x.vaccine_n]
+                
+                x.vac_eff_inf = deepcopy(p.vac_efficacy_inf[x.vaccine_n])
+                x.vac_eff_symp = deepcopy(p.vac_efficacy_symp[x.vaccine_n])
+                x.vac_eff_sev = deepcopy(p.vac_efficacy_sev[x.vaccine_n])
 
 
-            if x.recovered
-                index = Int(floor(x.days_recovered/7))
+                if x.recovered
+                    index = Int(floor(x.days_recovered/7))
 
-                if index > 0
-                    if index <= size(waning_factors_rec,1)
-                        aux = waning_factors_rec[index,1]
+                    if index > 0
+                        if index <= size(waning_factors_rec,1)
+                            aux = waning_factors_rec[index,1]
+                        else
+                            aux = waning_factors_rec[end,1]
+                        end
                     else
-                        aux = waning_factors_rec[end,1]
+                        aux = 1.0
                     end
-                else
-                    aux = 1.0
-                end
 
-                if aux > x.vac_eff_inf[1][x.vac_status][end]
-                    x.recvac = 1
-                else
-                    x.recvac = 2
+                    if aux > x.vac_eff_inf[1][x.vac_status][end]
+                        x.recvac = 1
+                    else
+                        x.recvac = 2
+                    end
                 end
             end
         end
@@ -808,27 +821,29 @@ function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64
 
         for ii in ind2[pos2]
             x = humans[ii]
-            x.days_vac = 0
-            x.vac_status = 2
-            x.index_day = 1
-            
-            if x.recovered
-                index = Int(floor(x.days_recovered/7))
+            if vaccine_day+x.insured > 0
+                x.days_vac = 0
+                x.vac_status = 2
+                x.index_day = 1
+                
+                if x.recovered
+                    index = Int(floor(x.days_recovered/7))
 
-                if index > 0
-                    if index <= size(waning_factors_rec,1)
-                        aux = waning_factors_rec[index,1]
+                    if index > 0
+                        if index <= size(waning_factors_rec,1)
+                            aux = waning_factors_rec[index,1]
+                        else
+                            aux = waning_factors_rec[end,1]
+                        end
                     else
-                        aux = waning_factors_rec[end,1]
+                        aux = 1.0
                     end
-                else
-                    aux = 1.0
-                end
 
-                if aux > x.vac_eff_inf[1][x.vac_status][end]
-                    x.recvac = 1
-                else
-                    x.recvac = 2
+                    if aux > x.vac_eff_inf[1][x.vac_status][end]
+                        x.recvac = 1
+                    else
+                        x.recvac = 2
+                    end
                 end
             end
         end
@@ -842,27 +857,29 @@ function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64
 
         for ii in ind1[pos2]
             x = humans[ii]
-            x.days_vac = 0
-            x.vac_status = 2
-            x.index_day = 1
-            
-            if x.recovered
-                index = Int(floor(x.days_recovered/7))
+            if vaccine_day+x.insured > 0
+                x.days_vac = 0
+                x.vac_status = 2
+                x.index_day = 1
+                
+                if x.recovered
+                    index = Int(floor(x.days_recovered/7))
 
-                if index > 0
-                    if index <= size(waning_factors_rec,1)
-                        aux = waning_factors_rec[index,1]
+                    if index > 0
+                        if index <= size(waning_factors_rec,1)
+                            aux = waning_factors_rec[index,1]
+                        else
+                            aux = waning_factors_rec[end,1]
+                        end
                     else
-                        aux = waning_factors_rec[end,1]
+                        aux = 1.0
                     end
-                else
-                    aux = 1.0
-                end
 
-                if aux > x.vac_eff_inf[1][x.vac_status][end]
-                    x.recvac = 1
-                else
-                    x.recvac = 2
+                    if aux > x.vac_eff_inf[1][x.vac_status][end]
+                        x.recvac = 1
+                    else
+                        x.recvac = 2
+                    end
                 end
             end
         end
@@ -880,56 +897,8 @@ function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64
     if l2 > 0
         pos = sample(rng,pos,l2,replace=false)
         for i in pos
-            nvacgiven += 1
             x = humans[i]
-            x.days_vac = 0
-            x.index_day = 1
-            x.boosted = true
-            x.tested = false
-            x.n_boosted += 1
-            #### ADD here the new vaccine efficacy against Omicron for booster
-                
-            x.vac_eff_inf[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][1]
-            x.vac_eff_symp[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][2]
-            x.vac_eff_sev[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][3]
-
-            # we don't  really care about the other ones at this point
-            #moderna has a different value against Delta for booster
-            x.vac_eff_inf[4][2][end] = [x.vac_eff_inf[4][2][end]; 0.94][x.vaccine_n]
-
-            if x.recovered
-                index = Int(floor(x.days_recovered/7))
-
-                if index > 0
-                    if index <= size(waning_factors_rec,1)
-                        aux = waning_factors_rec[index,1]
-                    else
-                        aux = waning_factors_rec[end,1]
-                    end
-                else
-                    aux = 1.0
-                end
-
-                if aux > x.vac_eff_inf[1][x.vac_status][end]
-                    x.recvac = 1
-                else
-                    x.recvac = 2
-                end
-            end
-        end
-    end
-
-
-    ### Let's add booster to those ones who become eligible!
-    #max_boost = [0;1;2;2][p.scenario+1]
-    age_boost = [0:0,5:17,50:100,18:100,5:100,5:100][p.scenario+1]
-    pos = findall(xx-> xx.age in age_boost && xx.vac_status == 2 && xx.n_boosted < xx.max_boost && xx.days_vac >= 120 && !xx.tested && !(xx.health_status in aux_states),humans)
-    l2 = length(pos)
-    if l2 > 0
-        for i in pos
-            x = humans[i]
-            agg = findfirst(x.age .∈ p.age_groups_vac)
-            if rand() < p.intervention_prob[agg]
+            if vaccine_day+x.insured > 0
                 nvacgiven += 1
                 x.days_vac = 0
                 x.index_day = 1
@@ -942,6 +911,7 @@ function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64
                 x.vac_eff_symp[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][2]
                 x.vac_eff_sev[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][3]
 
+                # we don't  really care about the other ones at this point
                 #moderna has a different value against Delta for booster
                 x.vac_eff_inf[4][2][end] = [x.vac_eff_inf[4][2][end]; 0.94][x.vaccine_n]
 
@@ -962,6 +932,57 @@ function vac_time_extra!(sim::Int64,st::Int64,ind1,ind2,indb,r1::Int64,r2::Int64
                         x.recvac = 1
                     else
                         x.recvac = 2
+                    end
+                end
+            end
+        end
+    end
+
+
+    ### Let's add booster to those ones who become eligible!
+    #max_boost = [0;1;2;2][p.scenario+1]
+    age_boost = [0:0,5:17,50:100,18:100,5:100,5:100][p.scenario+1]
+    pos = findall(xx-> xx.age in age_boost && xx.vac_status == 2 && xx.n_boosted < xx.max_boost && xx.days_vac >= 120 && !xx.tested && !(xx.health_status in aux_states),humans)
+    l2 = length(pos)
+    if l2 > 0
+        for i in pos
+            x = humans[i]
+            agg = findfirst(x.age .∈ p.age_groups_vac)
+            if rand() < p.intervention_prob[agg]
+                if vaccine_day+x.insured > 0
+                    nvacgiven += 1
+                    x.days_vac = 0
+                    x.index_day = 1
+                    x.boosted = true
+                    x.tested = false
+                    x.n_boosted += 1
+                    #### ADD here the new vaccine efficacy against Omicron for booster
+                        
+                    x.vac_eff_inf[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][1]
+                    x.vac_eff_symp[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][2]
+                    x.vac_eff_sev[6][2][end] = p.new_vaccine_efficacy[x.vaccine_n][3]
+
+                    #moderna has a different value against Delta for booster
+                    x.vac_eff_inf[4][2][end] = [x.vac_eff_inf[4][2][end]; 0.94][x.vaccine_n]
+
+                    if x.recovered
+                        index = Int(floor(x.days_recovered/7))
+
+                        if index > 0
+                            if index <= size(waning_factors_rec,1)
+                                aux = waning_factors_rec[index,1]
+                            else
+                                aux = waning_factors_rec[end,1]
+                            end
+                        else
+                            aux = 1.0
+                        end
+
+                        if aux > x.vac_eff_inf[1][x.vac_status][end]
+                            x.recvac = 1
+                        else
+                            x.recvac = 2
+                        end
                     end
                 end
             else
@@ -2289,7 +2310,11 @@ function move_to_inf(x::Human)
     ## transfers human h to the severe infection stage for γ days
     ## for swap, check if person will be hospitalized, selfiso, die, or recover
  
-    # h = prob of hospital, c = prob of icu AFTER hospital    
+    # h = prob of hospital, c = prob of icu AFTER hospital 
+    
+    aux_med_hosp = (1-p.medicine_eff_hosp)^Int(x.medicine_day+x.insured > 0)
+    aux_med_ded = (1-p.medicine_eff_ded)^Int(x.medicine_day+x.insured > 0)
+    
     comh = 0.98
     if x.strain == 1 || x.strain == 3 || x.strain == 5
         h = x.comorbidity == 1 ? comh : 0.04 #0.376
@@ -2369,7 +2394,7 @@ function move_to_inf(x::Human)
     x.swap = UNDEF
     
     x.tis = 0 
-    if rand() < h     # going to hospital or ICU but will spend delta time transmissing the disease with full contacts 
+    if rand() < h*aux_med_hosp     # going to hospital or ICU but will spend delta time transmissing the disease with full contacts 
         x.exp = time_to_hospital
         if rand() < c
             aux_v = [ICU;ICU2;ICU3;ICU4;ICU5;ICU6]
@@ -2393,7 +2418,7 @@ function move_to_inf(x::Human)
             x.swap_status = IISO
             #x.swap = x.strain == 1 ? IISO : IISO2
         else
-            if rand() < mh[gg]*aux
+            if rand() < mh[gg]*aux*aux_med_ded
                 x.exp = x.dur[4] 
                 aux_v = [DED;DED2;DED3;DED4;DED5;DED6]
                 x.swap = aux_v[x.strain]
@@ -2418,12 +2443,13 @@ function move_to_iiso(x::Human)
     x.health_status = x.swap_status
     groups = [0:34,35:54,55:69,70:84,85:100]
     gg = findfirst(y-> x.age in y,groups)
+    aux_med_ded = (1-p.medicine_eff_ded)^Int(x.medicine_day+x.insured > 0)
     
     mh = [0.0002; 0.0015; 0.011; 0.0802; 0.381] # death rate for severe cases.
     aux = 0.0#(p.mortality_inc^Int(x.strain==2 || x.strain == 4))
     #aux = x.strain == 4 || x.strain == 6 ? aux*0.0 : aux
 
-    if rand() < mh[gg]*aux
+    if rand() < mh[gg]*aux*aux_med_ded
         x.exp = x.dur[4] 
         aux_v = [DED;DED2;DED3;DED4;DED5;DED6]
         x.swap = aux_v[x.strain]
@@ -2446,6 +2472,9 @@ function move_to_hospicu(x::Human)
     #= age_thres = [24;34;44;54;64;74;84;999]
     g = findfirst(y-> y >= x.age,age_thres) =#
     #https://www.medrxiv.org/content/10.1101/2021.08.24.21262415v1
+
+    aux_med_ded = (1-p.medicine_eff_ded)^Int(x.medicine_day+x.insured > 0)
+    
     aux = [0:4, 5:19, 20:44, 45:54, 55:64, 65:74, 75:84, 85:99]
     f3 = f4 = f5 = 4
     f2 = 6
@@ -2510,7 +2539,7 @@ function move_to_hospicu(x::Human)
 
     if swaphealth == HOS
         x.hospicu = 1 
-        if rand() < mh[gg] ## person will die in the hospital 
+        if rand() < mh[gg]*aux_med_ded ## person will die in the hospital 
             x.exp = muH 
             aux_v = [DED;DED2;DED3;DED4;DED5;DED6]
             x.swap = aux_v[x.strain]
@@ -2526,7 +2555,7 @@ function move_to_hospicu(x::Human)
     elseif swaphealth == ICU
         x.hospicu = 2 
                 
-        if rand() < mc[gg] ## person will die in the ICU 
+        if rand() < mc[gg]*aux_med_ded ## person will die in the ICU 
             x.exp = muC
             aux_v = [DED;DED2;DED3;DED4;DED5;DED6]
             x.swap = aux_v[x.strain]
